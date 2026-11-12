@@ -1,0 +1,114 @@
+name: Deploy Server
+run-name: Deploy Server (${{ github.ref_name }}) @ ${{ github.sha }}
+
+on:
+    push:
+        branches: [main, develop]
+        paths:
+            [
+                'ManagerServer/**',
+                '.github/workflows/deploy-server.yml',
+            ]
+    workflow_dispatch:
+
+concurrency:
+    group: deploy-server-${{ github.ref_name }}
+    cancel-in-progress: false
+
+env:
+    DEPLOY_ENV: ${{ github.ref_name == 'main' && 'production' || 'develop' }}
+    DEPLOY_CONFIG_REPO: ${{ vars.DEPLOY_CONFIG_REPO }}
+    DEPLOY_CONFIG_DIR: ${{ vars.DEPLOY_CONFIG_DIR || 'manager-config' }}
+
+jobs:
+    build-and-push:
+        if: github.ref_name == 'main' || github.ref_name == 'develop'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        outputs:
+            image: ${{ steps.image.outputs.ref }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Compute image name
+              id: image
+              run: |
+                  repo="${{ github.repository }}"
+                  echo "name=ghcr.io/${repo,,}-server" >> "$GITHUB_OUTPUT"
+                  echo "ref=ghcr.io/${repo,,}-server:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            - uses: docker/setup-buildx-action@v3
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Build and push
+              uses: docker/build-push-action@v6
+              with:
+                  context: ManagerServer
+                  push: true
+                  provenance: false
+                  sbom: false
+                  tags: |
+                      ${{ steps.image.outputs.ref }}
+                      ${{ steps.image.outputs.name }}:${{ env.DEPLOY_ENV }}
+                  build-args: |
+                      APP_RELEASE=${{ github.sha }}
+                  cache-from: type=gha,scope=server
+                  cache-to: type=gha,mode=max,scope=server
+
+    deploy:
+        needs: build-and-push
+        # Skipped until the deploy-config repository is configured
+        if: vars.DEPLOY_CONFIG_REPO != ''
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/checkout@v4
+              with:
+                  repository: ${{ env.DEPLOY_CONFIG_REPO }}
+                  ssh-key: ${{ secrets.CONFIG_REPO_KEY }}
+                  path: config
+            - name: Load deploy config
+              run: |
+                  cfg="config/$DEPLOY_CONFIG_DIR/$DEPLOY_ENV"
+                  set -a; . "$cfg/deploy.env"; set +a
+                  # Logs of a public repo are public: mask every value, and pass only what later
+                  # steps need via GITHUB_ENV (its contents are echoed in each step's log header).
+                  for v in "$DEPLOY_HOST" "$DEPLOY_USER" "$DEPLOY_PATH" "$GHCR_USER" "$GHCR_TOKEN"; do
+                      [ -n "$v" ] && echo "::add-mask::$v"
+                  done
+                  {
+                      echo "DEPLOY_PATH=$DEPLOY_PATH"
+                      echo "GHCR_USER=$GHCR_USER"
+                      echo "GHCR_TOKEN=$GHCR_TOKEN"
+                  } >> "$GITHUB_ENV"
+                  install -m 700 -d ~/.ssh
+                  install -m 600 "$cfg/deploy_key" ~/.ssh/id_deploy
+                  cat "$cfg/known_hosts" >> ~/.ssh/known_hosts
+                  printf 'Host deploy\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile ~/.ssh/id_deploy\n' \
+                      "$DEPLOY_HOST" "$DEPLOY_PORT" "$DEPLOY_USER" > ~/.ssh/config
+            - name: Upload files
+              env:
+                  SERVER_IMAGE: ${{ needs.build-and-push.outputs.image }}
+              run: |
+                  dir="$DEPLOY_PATH/server"
+                  ssh deploy "mkdir -p '$dir'"
+                  scp ManagerServer/docker-compose.yml "deploy:$dir/docker-compose.yml"
+                  { grep -v '^SERVER_IMAGE=' "config/$DEPLOY_CONFIG_DIR/$DEPLOY_ENV/server.env"; printf '\nSERVER_IMAGE=%s\n' "$SERVER_IMAGE"; } > server.env
+                  scp server.env "deploy:$dir/.env"
+            - name: Deploy
+              run: |
+                  ssh deploy "docker login ghcr.io -u '$GHCR_USER' --password-stdin" <<< "$GHCR_TOKEN"
+                  ssh deploy bash -s <<EOF
+                  set -e
+                  cd '$DEPLOY_PATH/server'
+                  docker compose pull
+                  # .env may change without the image changing (e.g. re-run), so always recreate
+                  docker compose up -d --remove-orphans --force-recreate
+                  docker image prune -f
+                  EOF

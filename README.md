@@ -139,6 +139,20 @@ Releases are published for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `
 
 `Assets/Translations.json` and `Assets/Extensions.json` are committed, so a normal build does not touch the network. The `refresh-translations.cmd` and `refresh-extensions.cmd` scripts re-download them from manager.io when they need updating.
 
+## Docker
+
+`ManagerServer/Dockerfile` builds a Debian-based image with Chromium included for PDF rendering. The server listens on port 8080 and stores data in `/data`:
+
+```
+docker build -t manager-server ManagerServer
+docker run -d -p 8080:8080 -v manager-data:/data manager-server
+```
+
+GitHub Actions (`.github/workflows/`):
+
+- `ci-server.yml` — on pull requests touching `ManagerServer/`, builds the project and the image.
+- `deploy-server.yml` — on push to `main` (production) or `develop`, pushes the image to GHCR and deploys `ManagerServer/docker-compose.yml` over SSH. Deployment settings are read from a private config repository (`DEPLOY_CONFIG_REPO` variable, `CONFIG_REPO_KEY` secret).
+
 ---
 
 # Help and community

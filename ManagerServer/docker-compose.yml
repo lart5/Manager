@@ -1,0 +1,23 @@
+# Deployment compose for Manager Server (single VPS).
+# The image is built & pushed by GitHub Actions; the server only pulls & runs it.
+#
+# .env is uploaded by CI from the deploy-config repo (manager-config/<env>/server.env)
+# and should set COMPOSE_PROJECT_NAME and SERVER_PORT. Any server option can also be
+# passed as an env var with the same name (e.g. smtp=smtp://user:pass@host:587?from=...,
+# sentry=<dsn>). SERVER_IMAGE is appended by CI.
+
+services:
+  server:
+    image: ${SERVER_IMAGE:-ghcr.io/lart5/manager-server:latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - '${SERVER_PORT:-4010}:8080'
+    volumes:
+      # Business files, users and blobs. Back this volume up.
+      - data:/data
+    stop_grace_period: 30s
+
+volumes:
+  data:
