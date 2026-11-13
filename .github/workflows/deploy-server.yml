@@ -108,6 +108,9 @@ jobs:
                   set -e
                   cd '$DEPLOY_PATH/server'
                   docker compose pull
+                  # Bind-mounted data dir (created by Docker if missing): hand it to the container user (UID 1654).
+                  # The script arrives on stdin (bash -s), so -T and </dev/null keep the container from eating it.
+                  docker compose run --rm -T --no-deps --user root --entrypoint chown server -R 1654:1654 /data </dev/null
                   # .env may change without the image changing (e.g. re-run), so always recreate
                   docker compose up -d --remove-orphans --force-recreate
                   docker image prune -f

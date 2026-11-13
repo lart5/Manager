@@ -19,9 +19,7 @@ services:
       # Loopback only: the server is reachable from outside through nginx, never directly
       - '127.0.0.1:${SERVER_PORT:-4010}:8080'
     volumes:
-      # Business files, users and blobs. Back this volume up.
-      - data:/data
+      # Business files (*.manager), users and blobs. Back this directory up.
+      # Must be owned by UID 1654 (the container user); CI chowns it on every deploy.
+      - ${DATA_DIR:-./data}:/data
     stop_grace_period: 30s
-
-volumes:
-  data:

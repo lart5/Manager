@@ -153,7 +153,7 @@ GitHub Actions (`.github/workflows/`):
 - `ci-server.yml` — on pull requests touching `ManagerServer/`, builds the project and the image.
 - `deploy-server.yml` — on push to `main` (production) or `develop`, pushes the image to GHCR and deploys `ManagerServer/docker-compose.yml` over SSH. Deployment settings are read from a private config repository (`DEPLOY_CONFIG_REPO` variable, `CONFIG_REPO_KEY` secret).
 
-The deployed container listens on `127.0.0.1` only; `deploy/nginx/manager.conf` is the host nginx reverse proxy with HTTPS (Let's Encrypt).
+The deployed container listens on `127.0.0.1` only; `deploy/nginx/manager.conf` is the host nginx reverse proxy with HTTPS (Let's Encrypt). Data is kept next to the compose file in `$DEPLOY_PATH/server/data` (override with `DATA_DIR`); back up that directory.
 
 ---
 
